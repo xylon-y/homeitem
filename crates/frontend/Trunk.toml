@@ -1,0 +1,12 @@
+# Trunk 构建配置（CSR）
+[build]
+target = "index.html"
+dist = "dist"
+target_dir = "dist"
+
+[watch]
+watch = ["src", "index.html", "style.css"]
+
+[serve]
+port = 3000
+open = false

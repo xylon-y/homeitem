@@ -1,0 +1,78 @@
+/* homeitem 全局样式（中文 UI，简洁卡片风） */
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --fg: #1f2933;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --danger: #dc2626;
+  --border: #e5e7eb;
+  --radius: 10px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+.app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.6rem 1.2rem; background: var(--card); border-bottom: 1px solid var(--border);
+}
+.topbar .brand { font-weight: 700; color: var(--accent); text-decoration: none; }
+.nav-links { display: flex; gap: 1rem; align-items: center; }
+.nav-links a { color: var(--fg); text-decoration: none; }
+.nav-links a:hover { color: var(--accent); }
+.btn-link { background: none; border: none; color: var(--danger); cursor: pointer; padding: 0; }
+.content { flex: 1; padding: 1.2rem; }
+.page { max-width: 960px; margin: 0 auto; }
+h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 0.8rem; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+.error { color: var(--danger); }
+
+.auth-card {
+  max-width: 380px; margin: 8vh auto; background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 1.6rem;
+}
+.auth-card form { display: flex; flex-direction: column; gap: 0.8rem; }
+.auth-card label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; }
+.auth-card input {
+  padding: 0.5rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 6px; font-size: 1rem;
+}
+.auth-card button {
+  padding: 0.55rem; background: var(--accent); color: #fff; border: none;
+  border-radius: 6px; font-size: 1rem; cursor: pointer;
+}
+.auth-card button:disabled { opacity: 0.6; cursor: wait; }
+.check { flex-direction: row !important; align-items: center; gap: 0.4rem !important; }
+
+.stat-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.8rem;
+}
+.stat-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem; text-align: center;
+}
+.stat-num { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+.stat-label { color: var(--muted); font-size: 0.85rem; margin-top: 0.3rem; }
+
+.tree { list-style: none; padding-left: 1rem; }
+.tree > li { margin: 0.35rem 0; }
+.tree-icon { margin-right: 0.35rem; }
+
+.search-bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.search-bar input { flex: 1; padding: 0.5rem 0.7rem; border: 1px solid var(--border); border-radius: 6px; }
+.search-bar button { padding: 0.5rem 1rem; background: var(--accent); color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+
+.items-table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: var(--radius); overflow: hidden; }
+.items-table th, .items-table td { padding: 0.55rem 0.8rem; text-align: left; border-bottom: 1px solid var(--border); }
+.items-table th { background: #f1f5f9; font-size: 0.85rem; color: var(--muted); }
+
+.pager { display: flex; align-items: center; gap: 1rem; margin-top: 0.8rem; }
+.pager button { padding: 0.4rem 0.8rem; border: 1px solid var(--border); background: var(--card); border-radius: 6px; cursor: pointer; }
+.pager button:disabled { opacity: 0.5; cursor: not-allowed; }
