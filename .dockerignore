@@ -1,0 +1,11 @@
+target
+target-wasm
+.tmpbuild
+data
+*.db
+*.db-shm
+*.db-wal
+.env
+.git
+crates/frontend/dist
+crates/frontend/.trunk

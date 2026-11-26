@@ -1,0 +1,23 @@
+# homeitem 单容器部署
+# 数据（SQLite + 上传文件）持久化在 ./data
+services:
+  homeitem:
+    build: .
+    image: homeitem:latest
+    container_name: homeitem
+    restart: unless-stopped
+    ports:
+      - "7745:7745"
+    environment:
+      # 中文界面 + 中文默认组名
+      HOMEITEM_ALLOW_REGISTRATION: "0"
+      # 邮件推送（可选）：配置后自动发送保修/保养/库存提醒
+      # HOMEITEM_SMTP_URL: "smtp://user:pass@mail.example.com:587"
+      # HOMEITEM_MAIL_FROM: "homeitem@example.com"
+      # HOMEITEM_PUBLIC_BASE_URL: "http://192.168.1.10:7745"
+      # JWT 密钥（缺省自动生成并持久化到 /data/.jwt_secret）
+      # HOMEITEM_JWT_SECRET: "change-me"
+      # 扫描间隔（分钟），默认 60
+      # HOMEITEM_REMINDER_INTERVAL_MIN: "60"
+    volumes:
+      - ./data:/data
