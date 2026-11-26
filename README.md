@@ -1,6 +1,6 @@
 # homeitem
 
-> 中文优先的家庭物品管理器（Home Inventory）。单容器部署、纯 Rust 实现。
+> 中文优先的家庭物品管理系统（Home Inventory）。单容器部署、纯 Rust 实现。
 
 基于开源项目 [HomeBox](https://github.com/sysadminsmedia/homebox) 的功能设计，使用 Rust 技术栈重写实现。上游使用 Go + Vue + SQLite，本项目使用：
 
