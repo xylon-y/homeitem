@@ -1,0 +1,13 @@
+/target
+**/target
+crates/frontend/dist
+crates/frontend/.trunk
+crates/frontend/pkg
+data/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+.env
+.idea/
+.vscode/
