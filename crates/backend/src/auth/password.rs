@@ -5,11 +5,31 @@ use argon2::Argon2;
 
 use crate::error::{AppError, AppResult};
 
+/// Minimum accepted password length.
+pub const MIN_PASSWORD_LEN: usize = 8;
+
+/// Validate password strength before spending CPU on Argon2.
+///
+/// # Errors
+/// `Validation` when the password is too short or blank.
+pub fn validate_password(password: &str) -> AppResult<()> {
+    if password.chars().count() < MIN_PASSWORD_LEN {
+        return Err(AppError::Validation(format!(
+            "密码至少需要 {MIN_PASSWORD_LEN} 个字符"
+        )));
+    }
+    if password.trim().is_empty() {
+        return Err(AppError::Validation("密码不能为空".into()));
+    }
+    Ok(())
+}
+
 /// Hash a plaintext password with Argon2id (random salt, PHC string).
 ///
 /// # Errors
 /// Fails only when the underlying hash operation fails (never for bad input).
 pub fn hash_password(password: &str) -> AppResult<String> {
+    validate_password(password)?;
     // argon2 0.6 generates and embeds a random salt automatically
     let hash = Argon2::default()
         .hash_password(password.as_bytes())
@@ -37,16 +57,17 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let h = hash_password("s3cret!").unwrap();
-        assert!(verify_password("s3cret!", &h));
+        let h = hash_password("s3cret!!").unwrap();
+        assert!(verify_password("s3cret!!", &h));
         assert!(!verify_password("wrong", &h));
-        assert!(!verify_password("s3cret!", "not-a-hash"));
+        assert!(!verify_password("s3cret!!", "not-a-hash"));
+        assert!(hash_password("short").is_err(), "weak passwords must be rejected");
     }
 
     #[test]
     fn salts_differ() {
-        let a = hash_password("x").unwrap();
-        let b = hash_password("x").unwrap();
+        let a = hash_password("xxxxxxx1").unwrap();
+        let b = hash_password("xxxxxxx1").unwrap();
         assert_ne!(a, b, "each hash must use a fresh salt");
     }
 }

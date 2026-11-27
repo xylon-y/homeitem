@@ -62,13 +62,16 @@ impl Handler for AuthMiddleware {
         let uid = auth.user_id.clone();
         let gid = auth.group_id.clone();
         let claimed_role = auth.role.clone();
+        let claimed_tv = auth.token_version;
         let live = with_read(&pool, move |conn| {
-            crate::db::repo::users::member_role(conn, &gid, &uid)
+            let role = crate::db::repo::users::member_role(conn, &gid, &uid)?;
+            let tv = crate::db::repo::users::token_version(conn, &uid)?;
+            Ok((role, tv))
         })
         .await;
 
         let valid = match live {
-            Ok(Some(role)) => role == claimed_role,
+            Ok((Some(role), tv)) => role == claimed_role && tv == claimed_tv,
             _ => false,
         };
         if !valid {

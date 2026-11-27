@@ -150,9 +150,20 @@ pub async fn download(
 
     // Ownership check applies to BOTH token scopes. Attachment (media) tokens
     // carry a signed `gid`; skipping this check allowed cross-tenant IDOR.
-    let (gid, eid2, aid2) = (auth.group_id.clone(), entity_id.clone(), attachment_id.clone());
+    // Also verify *live* membership: a removed member's still-valid token must
+    // not keep reading the old group's attachments (download runs on the
+    // public router, outside AuthMiddleware's membership check).
+    let (gid, uid, eid2, aid2) = (
+        auth.group_id.clone(),
+        auth.user_id.clone(),
+        entity_id.clone(),
+        attachment_id.clone(),
+    );
+    let claimed_tv = auth.token_version;
     let att = with_read(&pool, move |conn| {
-        if !crate::db::repo::entities::entity_exists(conn, &gid, &eid2)? {
+        let still_member = crate::db::repo::users::member_role(conn, &gid, &uid)?.is_some();
+        let tv_ok = crate::db::repo::users::token_version(conn, &uid)? == claimed_tv;
+        if !still_member || !tv_ok || !crate::db::repo::entities::entity_exists(conn, &gid, &eid2)? {
             return Ok(None);
         }
         repo::find(conn, &eid2, &aid2)
@@ -162,7 +173,7 @@ pub async fn download(
 
     let full = crate::db::safe_join(&config.upload_dir, &att.path)?;
     let bytes = std::fs::read(&full)
-        .map_err(|e| AppError::NotFound(format!("文件读取失败: {e}")))?;
+        .map_err(|_| AppError::NotFound("附件文件不可用".into()))?;
     let mime = att.mime_type.clone();
     res.headers_mut().insert(
         salvo::http::header::CONTENT_TYPE,

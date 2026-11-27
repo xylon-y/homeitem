@@ -17,18 +17,25 @@
 
 ## 功能
 
+### 物品管理
 - 物品与位置管理（共享实体表，树形位置视图，面包屑，位置就近解析）
-- 自定义物品类型（entity types）
-- 标签（含嵌套父子标签）
+- 物品新建 / 编辑 / 详情 / 删除 / 复制 / 归档，完整前端操作界面
+- 自定义物品类型（entity types，含 CRUD 界面）
+- 标签（含嵌套父子标签，含 CRUD 界面）
 - 自定义字段
-- 附件上传（multipart），照片自动设为主图，媒体链接支持 7 天媒体令牌
-- 保养/维护记录（scheduled / completed）
-- 到期提醒：保修到期 / 自定义提醒 / 保养计划 / 库存不足（低库存阈值）
-- 邮件推送（lettre SMTP，后台定时扫描，按 (通知器, 物品, 日期) 去重）
+- 附件上传（multipart），照片自动设为主图，画廊展示与删除，媒体链接支持 7 天媒体令牌
+- 保养/维护记录（scheduled / completed，含独立管理页面）
 - 搜索与筛选：全文（名称/序列号/备注等）、标签、类型、位置、仅带照片、低库存、排序分页
-- 统计：物品总数 / 资产总值 / 按位置汇总 / 按标签汇总 / 采购时间线
-- 基础账号密码登录（Argon2id），保持登录 30 天，邀请制注册
-- 多租户组：组内成员角色（user / owner），成员管理、邀请令牌
+
+### 提醒与统计
+- 到期提醒：保修到期 / 自定义提醒 / 保养计划 / 库存不足（低库存阈值），聚合页展示
+- 通知器管理（CRUD + 测试发送）：SMTP 邮件推送，后台定时扫描，按 (通知器, 物品, 日期) 去重
+- 统计：物品总数 / 资产总值 / 按位置汇总 / 按标签汇总 / 采购时间线图表
+
+### 账号与协作
+- 账号密码登录（Argon2id，支持用户名或邮箱），保持登录 30 天，邀请码注册页
+- 密码修改后自动撤销所有旧令牌（token version 机制）
+- 多租户组：组内成员角色（user / owner），成员管理、邀请令牌、组设置界面
 
 ## 开发
 
@@ -90,12 +97,16 @@ docker-compose.yml
 
 前缀 /api/v1，JSON 线协议 camelCase。完整清单见 docs/DESIGN.md。
 
+- GET /health  GET /status
 - POST /setup  POST /login  POST /register
 - GET|PUT /user  PUT /user/password
 - GET|PUT /group  GET /group/members  DELETE /group/members/{id}  PATCH /group/members/{id}/role
 - GET|POST /group/invitations  DELETE /group/invitations/{id}
 - GET|POST /entities  GET|PUT|PATCH|DELETE /entities/{id}  POST /entities/{id}/duplicate  GET /entities/{id}/path
 - GET|POST /entities/{id}/attachments  GET|DELETE /entities/{id}/attachments/{aid}
-- GET /locations/tree  GET /entity-types  GET /tags
+- GET|POST /entities/{id}/maintenance  PUT|DELETE /entities/{id}/maintenance/{mid}
+- GET /locations/tree
+- GET|POST /entity-types  PUT|DELETE /entity-types/{id}
+- GET /tags  GET /tags/tree  POST /tags  PUT|DELETE /tags/{id}
+- GET|POST /notifiers  PUT|DELETE /notifiers/{id}  POST /notifiers/{id}/test
 - GET /reminders  GET /statistics  GET /statistics/by-location  GET /statistics/by-tag  GET /statistics/value-over-time
-- GET /health

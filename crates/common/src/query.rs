@@ -38,7 +38,10 @@ pub struct EntitiesQuery {
 impl EntitiesQuery {
     /// Effective page number (1-based).
     pub fn page(&self) -> i64 {
-        if self.page < 1 { 1 } else { self.page }
+        // Upper bound prevents (page-1) * page_size from overflowing i64
+        // when used as a SQL OFFSET.
+        const MAX_PAGE: i64 = i64::MAX / 100;
+        if self.page < 1 { 1 } else if self.page > MAX_PAGE { MAX_PAGE } else { self.page }
     }
 
     /// Effective page size, clamped to 1..=100 (default 25).

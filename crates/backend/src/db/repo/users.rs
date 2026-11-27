@@ -22,6 +22,7 @@ pub struct UserRecord {
     pub group_id: String,
     pub group_name: String,
     pub role: GroupRole,
+    pub token_version: i64,
 }
 
 impl UserRecord {
@@ -44,7 +45,7 @@ impl UserRecord {
 
 const SELECT_USER: &str = "
 SELECT u.id, u.name, u.email, u.password_hash, u.is_superuser, u.activated_on,
-       u.created_at, u.updated_at,
+       u.created_at, u.updated_at, u.token_version,
        g.id, g.name, ug.role
   FROM users u
   JOIN user_groups ug ON ug.user_id = u.id
@@ -52,8 +53,8 @@ SELECT u.id, u.name, u.email, u.password_hash, u.is_superuser, u.activated_on,
 ";
 
 fn map_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
-    // columns: 0..7 users.*, 8 group id, 9 group name, 10 membership role
-    let role_raw: String = row.get(10)?;
+    // columns: 0..8 users.*, 9 group id, 10 group name, 11 membership role
+    let role_raw: String = row.get(11)?;
     let role = role_raw.parse().unwrap_or(GroupRole::User);
     Ok(UserRecord {
         id: text(row, 0)?,
@@ -64,8 +65,9 @@ fn map_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserRecord> {
         activated_on: ts_opt(row.get::<_, Option<String>>(5)?.as_deref()),
         created_at: ts_or_epoch(row.get::<_, Option<String>>(6)?.as_deref()),
         updated_at: ts_or_epoch(row.get::<_, Option<String>>(7)?.as_deref()),
-        group_id: text(row, 8)?,
-        group_name: text(row, 9)?,
+        token_version: row.get::<_, i64>(8).unwrap_or(0),
+        group_id: text(row, 9)?,
+        group_name: text(row, 10)?,
         role,
     })
 }
@@ -80,6 +82,14 @@ pub fn any_user_exists(conn: &Connection) -> AppResult<bool> {
 pub fn find_by_email(conn: &Connection, email: &str) -> AppResult<Option<UserRecord>> {
     let sql = format!("{SELECT_USER} WHERE u.email = ?1 COLLATE NOCASE");
     query_optional(conn, &sql, &[&email], map_user)
+}
+
+/// Find a user by email or display name (case-insensitive) for login.
+pub fn find_by_login(conn: &Connection, login: &str) -> AppResult<Option<UserRecord>> {
+    let sql = format!(
+        "{SELECT_USER} WHERE u.email = ?1 COLLATE NOCASE OR u.name = ?1 COLLATE NOCASE LIMIT 1"
+    );
+    query_optional(conn, &sql, &[&login], map_user)
 }
 
 /// Find a user by id.
@@ -141,14 +151,39 @@ pub fn update_profile(
     Ok(())
 }
 
-/// Replace the stored password hash.
+/// Replace the stored password hash and bump the token version so every
+/// previously issued JWT is invalidated immediately.
 pub fn set_password(conn: &Connection, id: &str, hash: &str) -> AppResult<()> {
     let now = super::now();
     conn.execute(
-        "UPDATE users SET password_hash = ?1, updated_at = ?2 WHERE id = ?3",
+        "UPDATE users SET password_hash = ?1, updated_at = ?2, token_version = token_version + 1 WHERE id = ?3",
         params![hash, now, id],
     )?;
     Ok(())
+}
+
+/// The current token version of a user (0 when not found).
+pub fn token_version(conn: &Connection, id: &str) -> AppResult<i64> {
+    Ok(conn
+        .query_row("SELECT token_version FROM users WHERE id = ?1", params![id], |r| r.get(0))
+        .unwrap_or(0))
+}
+
+/// Does this email already belong to another account?
+pub fn email_taken(conn: &Connection, email: &str, except_id: Option<&str>) -> AppResult<bool> {
+    let n: i64 = match except_id {
+        Some(id) => conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE email = ?1 COLLATE NOCASE AND id <> ?2",
+            params![email, id],
+            |r| r.get(0),
+        )?,
+        None => conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE email = ?1 COLLATE NOCASE",
+            params![email],
+            |r| r.get(0),
+        )?,
+    };
+    Ok(n > 0)
 }
 
 /// Mark the account activated (used after first login/registration).

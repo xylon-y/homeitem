@@ -191,6 +191,16 @@ CREATE TABLE notification_log (
 CREATE UNIQUE INDEX idx_notification_dedupe ON notification_log(notifier_id, dedupe_key);
 
 -- seed: default entity types per group are created by the setup handler
+"#), ("002_auth_hardening", r#"
+-- Token version lets password changes revoke all previously issued tokens.
+ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;
+
+-- Fix lowstock spelling for rows created by older builds (enum serializes as
+-- lowercase "lowstock"); map_notifier already tolerates both spellings.
+UPDATE notifiers SET kinds = REPLACE(kinds, 'lowStock', 'lowstock') WHERE kinds LIKE '%lowStock%';
+
+-- Faster login lookup by display name in addition to the unique email index.
+CREATE INDEX idx_users_name ON users(name COLLATE NOCASE);
 "#)];
 
 /// Apply all pending migrations.

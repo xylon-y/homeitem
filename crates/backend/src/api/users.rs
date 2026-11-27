@@ -27,13 +27,16 @@ fn build_token_response(
         user.role,
         TokenScope::User,
         stay,
+        user.token_version,
     )?;
-    let (attachment_token, _) = jwt::issue(
+    let (attachment_token, _) = jwt::issue_with_role(
         &config.jwt_secret,
         &user.id,
         &user.group_id,
+        user.role,
         TokenScope::Attachments,
         false,
+        user.token_version,
     )?;
     Ok(TokenResponse {
         token,
@@ -78,7 +81,7 @@ pub async fn login(
     let config = router::config(depot).clone();
     let body: LoginForm = json_body(req).await?;
     let username = body.username.clone();
-    let stored = with_read(pool, move |conn| users::find_by_email(conn, &username))
+    let stored = with_read(pool, move |conn| users::find_by_login(conn, &username))
         .await?
         .ok_or_else(|| AppError::Unauthorized("用户名或密码错误".into()))?;
     if !password::verify_password(&body.password, stored.password_hash.as_deref().unwrap_or("")) {
@@ -119,6 +122,12 @@ pub async fn update_me(
     let user_id = auth.user_id.clone();
     let name = body.name.clone();
     let email = body.email.clone();
+    let check_id = user_id.clone();
+    if let Some(e) = email.clone() {
+        if with_read(pool, move |conn| users::email_taken(conn, &e, Some(&check_id))).await? {
+            return Err(AppError::Conflict("邮箱已被其他账号使用".into()));
+        }
+    }
     with_write(pool, move |conn| {
         users::update_profile(conn, &user_id, name.as_deref(), email.as_deref())
     })
@@ -171,13 +180,34 @@ pub async fn register(
     let pool = router::pool(depot);
     let config = router::config(depot).clone();
     let body: RegisterRequest = json_body(req).await?;
-    let hash = password::hash_password(&body.password)?;
     let (name, email, token, open) = (
         body.name.clone(),
         body.email.clone(),
         body.token.clone(),
         config.allow_registration,
     );
+    // Validate the registration gate BEFORE spending CPU on Argon2 hashing:
+    // otherwise a closed instance can be DoS'd with high-cost hash requests.
+    let gate_token = token.clone();
+    let gate_ok = with_read(pool, move |conn| {
+        if gate_token.trim().is_empty() {
+            Ok(open)
+        } else {
+            Ok(crate::db::repo::groups::find_invitation(conn, &gate_token)
+                .map(|v| v.is_some())
+                .unwrap_or(false))
+        }
+    })
+    .await?;
+    if !gate_ok {
+        return Err(AppError::Forbidden("当前未开放注册，或邀请令牌无效".into()));
+    }
+    // Duplicate email must be reported before hashing too.
+    let email2 = email.clone();
+    if with_read(pool, move |conn| users::email_taken(conn, &email2, None)).await? {
+        return Err(AppError::Conflict("邮箱已被注册".into()));
+    }
+    let hash = password::hash_password(&body.password)?;
     let out = with_write(pool, move |conn| {
         users::register_with_invitation(conn, open, &name, &email, &hash, &token)
     })

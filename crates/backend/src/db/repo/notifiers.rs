@@ -33,7 +33,16 @@ fn map_notifier(row: &rusqlite::Row<'_>) -> rusqlite::Result<NotifierOut> {
             .split(',')
             .map(str::trim)
             .filter(|k| !k.is_empty())
-            .filter_map(|k| serde_json::from_value(serde_json::Value::String(k.to_string())).ok())
+            // Historic rows stored "lowStock" while `ReminderKind` serializes
+            // to lowercase "lowstock". Normalize both spellings so low-stock
+            // subscriptions are not silently dropped.
+            .filter_map(|k| match k.to_ascii_lowercase().as_str() {
+                "warranty" => Some(ReminderKind::Warranty),
+                "reminder" => Some(ReminderKind::Reminder),
+                "maintenance" => Some(ReminderKind::Maintenance),
+                "lowstock" => Some(ReminderKind::LowStock),
+                _ => None,
+            })
             .collect(),
         created_at: ts_or_epoch(row.get::<_, Option<String>>(6)?.as_deref()),
         updated_at: ts_or_epoch(row.get::<_, Option<String>>(7)?.as_deref()),
@@ -86,7 +95,12 @@ pub fn create_notifier(conn: &Connection, group_id: &str, req: &NotifierCreate) 
     let id = uuid::Uuid::new_v4().to_string();
     let now = super::now();
     let kinds = if req.kinds.is_empty() {
-        "warranty,reminder,maintenance,lowStock".to_string()
+        kinds_csv(&[
+            ReminderKind::Warranty,
+            ReminderKind::Reminder,
+            ReminderKind::Maintenance,
+            ReminderKind::LowStock,
+        ])
     } else {
         kinds_csv(&req.kinds)
     };
@@ -386,19 +400,36 @@ pub fn statistics(conn: &Connection, group_id: &str) -> AppResult<Statistics> {
 }
 
 /// Value totals grouped by location.
+///
+/// Uses the same "own location_id wins, otherwise nearest location ancestor
+/// along parent_id" resolution as the location tree counts, so the two views
+/// never disagree.
 pub fn stats_by_location(conn: &Connection, group_id: &str) -> AppResult<Vec<TotalsByOrganizer>> {
     query_all(
         conn,
-        "SELECT l.id, l.name,
-                COALESCE(SUM(e.quantity * e.purchase_price), 0),
-                COALESCE(COUNT(e.id), 0)
+        "WITH RECURSIVE items AS (
+             SELECT e.id, e.quantity, e.purchase_price, e.location_id, e.parent_id
+               FROM entities e JOIN entity_types et ON et.id = e.entity_type_id
+              WHERE e.group_id = ?1 AND e.archived = 0 AND et.is_location = 0
+         ),
+         resolved(id, quantity, purchase_price, location_id, hops) AS (
+             SELECT i.id, i.quantity, i.purchase_price,
+                    CASE WHEN i.location_id IS NOT NULL THEN i.location_id ELSE i.parent_id END, 0
+               FROM items i
+            UNION ALL
+             SELECT r.id, r.quantity, r.purchase_price, e.parent_id, r.hops + 1
+               FROM resolved r JOIN entities e ON e.id = r.location_id AND e.group_id = ?1
+              WHERE r.location_id IS NOT NULL AND r.hops < 64
+                AND e.entity_type_id NOT IN (SELECT id FROM entity_types WHERE is_location = 1)
+                AND e.parent_id IS NOT NULL
+         )
+         SELECT l.id, l.name,
+                COALESCE(SUM(r.quantity * r.purchase_price), 0),
+                COALESCE(COUNT(r.id), 0)
            FROM entities l
-           LEFT JOIN entities e
-             ON e.location_id = l.id AND e.archived = 0
-            AND e.id != l.id
-            AND e.entity_type_id IN (SELECT id FROM entity_types WHERE is_location = 0)
+           JOIN entity_types lt ON lt.id = l.entity_type_id AND lt.is_location = 1
+           LEFT JOIN resolved r ON r.location_id = l.id
           WHERE l.group_id = ?1
-            AND l.entity_type_id IN (SELECT id FROM entity_types WHERE is_location = 1)
           GROUP BY l.id, l.name
           ORDER BY 3 DESC",
         params![group_id],
@@ -445,9 +476,9 @@ pub fn stats_purchase_over_time(conn: &Connection, group_id: &str) -> AppResult<
         conn,
         "SELECT substr(purchase_date, 1, 7) AS ym,
                 COALESCE(SUM(quantity * purchase_price), 0)
-           FROM entities
-          WHERE group_id = ?1 AND purchase_date IS NOT NULL AND archived = 0
-            AND is_location = 0
+           FROM entities e
+          WHERE e.group_id = ?1 AND e.purchase_date IS NOT NULL AND e.archived = 0
+            AND e.entity_type_id IN (SELECT id FROM entity_types WHERE is_location = 0)
           GROUP BY ym ORDER BY ym",
         params![group_id],
         |r| {

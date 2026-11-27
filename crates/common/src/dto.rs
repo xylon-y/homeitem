@@ -8,6 +8,35 @@ use crate::GroupRole;
 /// ISO-8601 UTC timestamp used across the API.
 pub type Ts = DateTime<Utc>;
 
+/// 兼容反序列化：既接受完整 RFC3339（`2025-06-15T00:00:00Z`），
+/// 也接受纯日期（`2025-06-15`，按 UTC 零点）。上游 HomeBox 与
+/// `<input type="date">` 都使用纯日期格式。
+pub mod flexible_ts {
+    use chrono::{DateTime, NaiveDate, Utc};
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Option<DateTime<Utc>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = Option::<String>::deserialize(d)?;
+        let Some(s) = raw else { return Ok(None) };
+        let s = s.trim();
+        if s.is_empty() {
+            return Ok(None);
+        }
+        if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+            return Ok(Some(dt.with_timezone(&Utc)));
+        }
+        if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            if let Some(dt) = date.and_hms_opt(0, 0, 0) {
+                return Ok(Some(DateTime::from_naive_utc_and_offset(dt, Utc)));
+            }
+        }
+        Ok(None)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // pagination / envelope
 // ---------------------------------------------------------------------------
@@ -156,6 +185,7 @@ pub struct InvitationOut {
     pub role: GroupRole,
     pub email: Option<String>,
     pub created_at: Ts,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub expires_at: Option<Ts>,
 }
 
@@ -312,8 +342,11 @@ pub struct EntitySummary {
     pub thumbnail_id: Option<String>,
     pub purchase_price: f64,
     pub total_price: f64,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub warranty_expires: Option<Ts>,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub reminder_date: Option<Ts>,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub sold_date: Option<Ts>,
     pub sold_price: f64,
     pub item_count: i64,
@@ -332,6 +365,7 @@ pub struct EntityOut {
     pub notes: String,
     pub lifetime_warranty: bool,
     pub warranty_details: String,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub purchase_date: Option<Ts>,
     pub purchase_from: String,
     pub sold_to: String,
@@ -368,11 +402,11 @@ pub struct EntityCreate {
     pub notes: String,
     #[serde(default)]
     pub purchase_price: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub purchase_date: Option<Ts>,
     #[serde(default)]
     pub purchase_from: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub warranty_expires: Option<Ts>,
 }
 
@@ -410,19 +444,23 @@ pub struct EntityUpdate {
     pub notes: String,
     #[serde(default)]
     pub lifetime_warranty: bool,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub warranty_expires: Option<Ts>,
     #[serde(default)]
     pub warranty_details: String,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub purchase_date: Option<Ts>,
     #[serde(default)]
     pub purchase_from: String,
     pub purchase_price: f64,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub sold_date: Option<Ts>,
     #[serde(default)]
     pub sold_to: String,
     pub sold_price: f64,
     #[serde(default)]
     pub sold_notes: String,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub reminder_date: Option<Ts>,
     #[serde(default)]
     pub reminder_note: String,
@@ -496,7 +534,9 @@ pub struct MaintenanceEntry {
     #[serde(default)]
     pub description: String,
     pub cost: f64,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub completed_date: Option<Ts>,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub scheduled_date: Option<Ts>,
     pub created_at: Ts,
     pub updated_at: Ts,
@@ -510,7 +550,9 @@ pub struct MaintenanceCreate {
     pub description: String,
     #[serde(default)]
     pub cost: f64,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub completed_date: Option<Ts>,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub scheduled_date: Option<Ts>,
 }
 
@@ -522,7 +564,9 @@ pub struct MaintenanceUpdate {
     pub description: String,
     #[serde(default)]
     pub cost: f64,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub completed_date: Option<Ts>,
+    #[serde(default, deserialize_with = "flexible_ts::deserialize")]
     pub scheduled_date: Option<Ts>,
 }
 

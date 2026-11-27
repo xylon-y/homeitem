@@ -76,3 +76,75 @@ h2 { font-size: 1.1rem; margin: 1.5rem 0 0.8rem; }
 .pager { display: flex; align-items: center; gap: 1rem; margin-top: 0.8rem; }
 .pager button { padding: 0.4rem 0.8rem; border: 1px solid var(--border); background: var(--card); border-radius: 6px; cursor: pointer; }
 .pager button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 通用按钮 / 表单 */
+.btn {
+  display: inline-block; padding: 0.5rem 0.9rem; background: var(--accent);
+  color: #fff !important; border: none; border-radius: 6px; cursor: pointer;
+  text-decoration: none; font-size: 0.9rem;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn-sm { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+.btn-danger { background: var(--danger); }
+.btn-ghost { background: var(--card); color: var(--fg) !important; border: 1px solid var(--border); }
+.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.page-header h1 { margin: 0; }
+
+.form-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 1rem; margin: 1rem 0;
+}
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.8rem; }
+.form-grid label, .form-card label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
+.form-grid input, .form-grid select, .form-grid textarea,
+.form-card input, .form-card select, .form-card textarea {
+  padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 6px;
+  font-size: 0.95rem; background: #fff;
+}
+.form-grid textarea, .form-card textarea { min-height: 70px; resize: vertical; }
+.form-actions { display: flex; gap: 0.6rem; margin-top: 1rem; }
+.section-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin: 1rem 0; }
+.checkbox-row { display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: center; }
+.checkbox-row label { flex-direction: row; align-items: center; gap: 0.3rem; }
+
+/* 徽章 / 标签 */
+.badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.75rem; }
+.badge-danger { background: #fee2e2; color: #b91c1c; }
+.badge-warn { background: #fef3c7; color: #92400e; }
+.badge-ok { background: #dcfce7; color: #166534; }
+.badge-info { background: #dbeafe; color: #1e40af; }
+.tag-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 0.3rem; vertical-align: middle; }
+.tag-chip { display: inline-flex; align-items: center; padding: 0.15rem 0.5rem; margin-right: 0.3rem; background: #f1f5f9; border-radius: 999px; font-size: 0.8rem; }
+
+/* 布局 */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin-top: 1rem; }
+.two-col section { min-width: 0; }
+.row-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.notice { background: #dbeafe; color: #1e40af; padding: 0.6rem 0.8rem; border-radius: 6px; margin-bottom: 0.8rem; }
+.success { background: #dcfce7; color: #166534; padding: 0.6rem 0.8rem; border-radius: 6px; margin-bottom: 0.8rem; }
+
+/* 详情 / 附件 */
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.5rem 1rem; }
+.detail-item { padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+.detail-item .k { color: var(--muted); font-size: 0.8rem; margin-right: 0.4rem; }
+.attachment-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.8rem; }
+.attachment-card { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; background: var(--card); }
+.attachment-card img { width: 100%; height: 100px; object-fit: cover; border-radius: 4px; }
+.breadcrumb { color: var(--muted); font-size: 0.85rem; margin-bottom: 0.8rem; }
+.breadcrumb a { color: var(--accent); text-decoration: none; }
+
+/* 时间线 */
+.timeline { display: flex; flex-direction: column; gap: 0.5rem; }
+.timeline-row { display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; }
+.timeline-label { width: 60px; color: var(--muted); }
+.timeline-bar-wrap { flex: 1; background: #f1f5f9; border-radius: 4px; height: 12px; overflow: hidden; }
+.timeline-bar { height: 100%; background: var(--accent); border-radius: 4px; }
+.timeline-value { width: 72px; text-align: right; }
+
+/* 响应式 */
+@media (max-width: 720px) {
+  .two-col { grid-template-columns: 1fr; }
+  .nav-links { gap: 0.6rem; font-size: 0.85rem; flex-wrap: wrap; }
+  .content { padding: 0.8rem; }
+  .form-grid { grid-template-columns: 1fr; }
+}

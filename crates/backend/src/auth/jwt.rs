@@ -22,6 +22,8 @@ pub struct Claims {
     pub scope: String,
     /// Group role (user|owner).
     pub role: String,
+    /// Password/token version — bumped on password change to revoke old tokens.
+    pub tv: i64,
     /// Expiry (unix seconds).
     pub exp: i64,
     /// Issued at (unix seconds).
@@ -36,6 +38,8 @@ pub struct AuthUser {
     pub role: GroupRole,
     pub scope: TokenScope,
     pub expires_at: Ts,
+    /// Token version captured at issue time.
+    pub token_version: i64,
 }
 
 /// Lifetime for a normal user token.
@@ -66,7 +70,7 @@ pub fn issue(
     scope: TokenScope,
     stay_logged_in: bool,
 ) -> AppResult<(String, Ts)> {
-    issue_with_role(secret, user_id, group_id, GroupRole::User, scope, stay_logged_in)
+    issue_with_role(secret, user_id, group_id, GroupRole::User, scope, stay_logged_in, 0)
 }
 
 /// Issue a token carrying the member's group role.
@@ -80,6 +84,7 @@ pub fn issue_with_role(
     role: GroupRole,
     scope: TokenScope,
     stay_logged_in: bool,
+    token_version: i64,
 ) -> AppResult<(String, Ts)> {
     let now = Utc::now();
     let hours = match scope {
@@ -93,6 +98,7 @@ pub fn issue_with_role(
         gid: group_id.to_string(),
         scope: scope.to_string(),
         role: role.to_string(),
+        tv: token_version,
         exp: expires.timestamp(),
         iat: now.timestamp(),
     };
@@ -107,7 +113,7 @@ pub fn issue_with_role(
 /// Returns `Unauthorized` for missing/invalid/expired tokens or wrong scope.
 pub fn validate(secret: &str, token: &str, required: TokenScope) -> AppResult<AuthUser> {
     let data = decode::<Claims>(token, &decode_key(secret)?, &Validation::default())
-        .map_err(|e| AppError::Unauthorized(format!("无效令牌: {e}")))?;
+        .map_err(|_| AppError::Unauthorized("无效令牌".into()))?;
     let claims = data.claims;
     let scope: TokenScope = claims
         .scope
@@ -119,13 +125,17 @@ pub fn validate(secret: &str, token: &str, required: TokenScope) -> AppResult<Au
     let expires_at = chrono::DateTime::from_timestamp(claims.exp, 0)
         .map(|dt| dt.with_timezone(&Utc))
         .ok_or_else(|| AppError::Unauthorized("令牌过期".into()))?;
-    let role: GroupRole = claims.role.parse().unwrap_or(GroupRole::User);
+    let role: GroupRole = claims
+        .role
+        .parse()
+        .map_err(|_| AppError::Unauthorized("令牌角色无效".into()))?;
     Ok(AuthUser {
         user_id: claims.sub,
         group_id: claims.gid,
         role,
         scope,
         expires_at,
+        token_version: claims.tv,
     })
 }
 
@@ -148,7 +158,7 @@ mod tests {
 
     #[test]
     fn role_roundtrips() {
-        let (token, _) = issue_with_role(SECRET, "u1", "g1", GroupRole::Owner, TokenScope::User, false).unwrap();
+        let (token, _) = issue_with_role(SECRET, "u1", "g1", GroupRole::Owner, TokenScope::User, false, 0).unwrap();
         let auth = validate(SECRET, &token, TokenScope::User).unwrap();
         assert_eq!(auth.role, GroupRole::Owner);
     }

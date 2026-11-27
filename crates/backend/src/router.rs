@@ -6,7 +6,7 @@ use salvo::prelude::*;
 
 use common::API_PREFIX;
 
-use crate::api::{attachments, entities, groups, system, users};
+use crate::api::{attachments, entities, groups, maintenance, notifiers, system, taxonomy, users};
 use crate::auth::middleware::AuthMiddleware;
 use crate::config::Config;
 use crate::db::Pool;
@@ -84,11 +84,20 @@ pub fn build_cors(config: &Config) -> Cors {
     if config.cors_origins.is_empty() {
         return cors;
     }
-    cors.allow_origin(salvo::cors::AllowOrigin::list(
-        config.cors_origins.iter().map(|o| {
-            o.parse::<salvo::http::HeaderValue>().expect("valid origin header")
-        }),
-    ))
+    // Skip malformed origins instead of panicking on startup — a bad env var
+    // must never take the whole service down.
+    let valid: Vec<salvo::http::HeaderValue> = config
+        .cors_origins
+        .iter()
+        .filter_map(|o| match o.parse::<salvo::http::HeaderValue>() {
+            Ok(v) => Some(v),
+            Err(_) => {
+                tracing::warn!(origin = %o, "ignoring malformed CORS origin");
+                None
+            }
+        })
+        .collect();
+    cors.allow_origin(salvo::cors::AllowOrigin::list(valid))
 }
 
 /// Assemble the full application router.
@@ -100,6 +109,7 @@ pub fn router(pool: Pool, config: &Config) -> Router {
     let public_api = Router::with_path(API_PREFIX)
         .hoop(state.clone())
         .push(Router::with_path("health").get(system::health))
+        .push(Router::with_path("status").get(system::status))
         .push(Router::with_path("setup").post(users::setup))
         .push(Router::with_path("login").post(users::login))
         .push(Router::with_path("register").post(users::register))
@@ -137,9 +147,49 @@ pub fn router(pool: Pool, config: &Config) -> Router {
                 .post(attachments::upload),
         )
         .push(Router::with_path("entities/{id}/attachments/{aid}").delete(attachments::delete))
+        .push(
+            Router::with_path("entities/{id}/maintenance")
+                .get(maintenance::list)
+                .post(maintenance::create),
+        )
+        .push(
+            Router::with_path("entities/{id}/maintenance/{mid}")
+                .put(maintenance::update)
+                .delete(maintenance::delete),
+        )
         .push(Router::with_path("locations/tree").get(entities::location_tree))
-        .push(Router::with_path("entity-types").get(entities::entity_types))
-        .push(Router::with_path("tags").get(entities::list_tags))
+        .push(
+            Router::with_path("entity-types")
+                .get(entities::entity_types)
+                .post(taxonomy::create_type),
+        )
+        .push(
+            Router::with_path("entity-types/{id}")
+                .put(taxonomy::update_type)
+                .delete(taxonomy::delete_type),
+        )
+        .push(
+            Router::with_path("tags")
+                .get(entities::list_tags)
+                .post(taxonomy::create_tag),
+        )
+        .push(Router::with_path("tags/tree").get(taxonomy::tag_tree))
+        .push(
+            Router::with_path("tags/{id}")
+                .put(taxonomy::update_tag)
+                .delete(taxonomy::delete_tag),
+        )
+        .push(
+            Router::with_path("notifiers")
+                .get(notifiers::list)
+                .post(notifiers::create),
+        )
+        .push(
+            Router::with_path("notifiers/{id}")
+                .put(notifiers::update)
+                .delete(notifiers::delete),
+        )
+        .push(Router::with_path("notifiers/{id}/test").post(notifiers::test))
         .push(Router::with_path("reminders").get(entities::list_reminders))
         .push(Router::with_path("statistics").get(entities::get_statistics))
         .push(Router::with_path("statistics/by-location").get(entities::stats_by_location))

@@ -11,7 +11,7 @@ use common::dto::{
     ItemAttachment, MaintenanceEntry, Page, TagSummary, TreeItem,
 };
 use common::query::EntitiesQuery;
-use rusqlite::{params, Connection, ToSql};
+use rusqlite::{params, Connection, OptionalExtension, ToSql};
 
 use super::{bool_sql, from_bool, query_all, query_optional, text, ts_opt, ts_or_epoch};
 use crate::error::{AppError, AppResult};
@@ -141,6 +141,45 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row0> {
             updated_at: ts_or_epoch(None),
         },
     })
+}
+
+/// Walk up `parent_id` from `start` and return the nearest ancestor that is a
+/// location (entity type with `is_location = 1`). Cycle-guarded.
+fn resolve_location_ancestor(
+    conn: &Connection,
+    group_id: &str,
+    start: &str,
+) -> AppResult<Option<(String, String)>> {
+    let mut cur = start.to_string();
+    let mut seen = HashSet::new();
+    for _ in 0..128 {
+        if !seen.insert(cur.clone()) {
+            return Ok(None); // cycle
+        }
+        let parent: Option<String> = conn
+            .query_row(
+                "SELECT parent_id FROM entities WHERE id = ?1 AND group_id = ?2",
+                params![cur, group_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        let Some(p) = parent else { return Ok(None) };
+        let loc: Option<(String, String)> = conn
+            .query_row(
+                "SELECT e.id, e.name FROM entities e
+                   JOIN entity_types et ON et.id = e.entity_type_id
+                  WHERE e.id = ?1 AND e.group_id = ?2 AND et.is_location = 1",
+                params![p, group_id],
+                |r| Ok::<_, rusqlite::Error>((text(r, 0)?, text(r, 1)?)),
+            )
+            .optional()?;
+        if loc.is_some() {
+            return Ok(loc);
+        }
+        cur = p;
+    }
+    Ok(None)
 }
 
 fn stub_summary(id: &str, name: &str) -> EntitySummary {
@@ -521,7 +560,16 @@ pub fn get(conn: &Connection, group_id: &str, id: &str) -> AppResult<EntityOut> 
         |row| row.get(0),
     )?;
 
-    let summary = summary_of(&r, tags, thumbs.get(id).cloned(), child_count);
+    let mut summary = summary_of(&r, tags, thumbs.get(id).cloned(), child_count);
+    // Upstream behavior: an item inherits the nearest location ancestor when
+    // it has no explicit location_id. Keep detail view consistent with the
+    // location tree / statistics (which already resolve through parent_id).
+    if summary.location_id.is_none() {
+        if let Some((loc_id, loc_name)) = resolve_location_ancestor(conn, group_id, id)? {
+            summary.location_id = Some(loc_id.clone());
+            summary.location = Some(Box::new(stub_summary(&loc_id, &loc_name)));
+        }
+    }
     Ok(EntityOut {
         summary,
         serial_number: detail.serial,
@@ -740,6 +788,35 @@ pub fn patch(
         )?;
     }
     if let Some(parent) = &req.parent_id {
+        // Reject self-reference and cycles: walking `parent_id` upward must
+        // never return to `id`, otherwise the entity silently vanishes from
+        // the location tree and breadcrumbs truncate.
+        if let Some(p) = parent {
+            if p == id {
+                return Err(AppError::Validation("上级不能是自身".into()));
+            }
+            let mut cur = p.clone();
+            let mut hops = 0;
+            while hops < 128 {
+                let next: Option<String> = conn
+                    .query_row(
+                        "SELECT parent_id FROM entities WHERE id = ?1 AND group_id = ?2",
+                        params![cur, group_id],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .unwrap_or(None)
+                    .flatten();
+                match next {
+                    Some(n) if n == id => {
+                        return Err(AppError::Validation("上级层级不能形成循环".into()))
+                    }
+                    Some(n) => cur = n,
+                    None => break,
+                }
+                hops += 1;
+            }
+        }
         conn.execute(
             "UPDATE entities SET parent_id = ?1, updated_at = ?2 WHERE id = ?3 AND group_id = ?4",
             params![parent, now, id, group_id],
@@ -791,14 +868,42 @@ pub fn delete(conn: &Connection, group_id: &str, id: &str) -> AppResult<Vec<Stri
     if exists == 0 {
         return Err(AppError::NotFound("物品不存在".into()));
     }
-    let paths = query_all(
-        conn,
-        "SELECT path FROM attachments WHERE entity_id = ?1",
-        params![id],
-        |r| text(r, 0),
-    )?;
+    // ON DELETE CASCADE removes descendant entities too. Collect attachment
+    // paths of the whole subtree so no orphan files are left on disk.
+    let mut ids = vec![id.to_string()];
+    let mut i = 0;
+    while i < ids.len() {
+        let cur = ids[i].clone();
+        let children = query_all(
+            conn,
+            "SELECT id FROM entities WHERE parent_id = ?1 AND group_id = ?2",
+            params![cur, group_id],
+            |r| text(r, 0),
+        )?;
+        for c in children {
+            if !ids.contains(&c) {
+                ids.push(c);
+            }
+        }
+        i += 1;
+        if ids.len() > 10000 {
+            break;
+        }
+    }
+    let mut paths = Vec::new();
+    for eid in &ids {
+        paths.extend(query_all(
+            conn,
+            "SELECT path FROM attachments WHERE entity_id = ?1",
+            params![eid],
+            |r| text(r, 0),
+        )?);
+    }
     // explicit tag cleanup (join table has no cascade through both FKs in all builds)
-    conn.execute("DELETE FROM entity_tags WHERE entity_id = ?1", params![id])?;
+    for eid in &ids {
+        conn.execute("DELETE FROM entity_tags WHERE entity_id = ?1", params![eid])?;
+        conn.execute("DELETE FROM maintenance_entries WHERE entity_id = ?1", params![eid])?;
+    }
     conn.execute("DELETE FROM entities WHERE id = ?1", params![id])?;
     Ok(paths)
 }
