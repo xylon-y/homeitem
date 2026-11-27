@@ -8,6 +8,7 @@ use common::TokenScope;
 use crate::auth::guard::bearer;
 use crate::auth::jwt::{validate, AuthUser};
 use crate::config::Config;
+use crate::db::with_read;
 
 /// Depot key under which the validated user is stored.
 pub const AUTH_KEY: &str = "homeitem.auth";
@@ -40,10 +41,8 @@ impl Handler for AuthMiddleware {
                 validate(&self.config.jwt_secret, &t, TokenScope::User)
                     .map_err(|_| StatusError::unauthorized().brief("无效令牌"))
             });
-        match attempted {
-            Ok(auth) => {
-                depot.insert(AUTH_KEY, auth);
-            }
+        let auth = match attempted {
+            Ok(auth) => auth,
             Err(e) => {
                 ctrl.skip_rest();
                 res.status_code(StatusCode::UNAUTHORIZED);
@@ -51,8 +50,38 @@ impl Handler for AuthMiddleware {
                     "error": e.brief,
                     "code": "UNAUTHORIZED",
                 })));
+                return;
             }
+        };
+
+        // JWT is stateless: without a DB check, a removed member's or a
+        // demoted owner's old token stays valid for up to 30 days. Verify
+        // current membership and role on every request; reject stale tokens
+        // so the user must re-authenticate and receive fresh claims.
+        let pool = crate::router::pool(depot).clone();
+        let uid = auth.user_id.clone();
+        let gid = auth.group_id.clone();
+        let claimed_role = auth.role.clone();
+        let live = with_read(&pool, move |conn| {
+            crate::db::repo::users::member_role(conn, &gid, &uid)
+        })
+        .await;
+
+        let valid = match live {
+            Ok(Some(role)) => role == claimed_role,
+            _ => false,
+        };
+        if !valid {
+            ctrl.skip_rest();
+            res.status_code(StatusCode::UNAUTHORIZED);
+            res.render(salvo::writing::Json(serde_json::json!({
+                "error": "成员资格或角色已变更，请重新登录",
+                "code": "UNAUTHORIZED",
+            })));
+            return;
         }
+
+        depot.insert(AUTH_KEY, auth);
     }
 }
 

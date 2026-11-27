@@ -123,9 +123,11 @@ pub fn delete_invitation(conn: &Connection, group_id: &str, id: &str) -> AppResu
 }
 
 /// Consume an invitation (delete after successful registration).
-pub fn consume_invitation(conn: &Connection, id: &str) -> AppResult<()> {
-    conn.execute("DELETE FROM group_invitations WHERE id = ?1", params![id])?;
-    Ok(())
+/// Atomically consume an invitation. Returns `false` if it was already used,
+/// so a single token cannot register multiple accounts under concurrency.
+pub fn consume_invitation(conn: &Connection, id: &str) -> AppResult<bool> {
+    let n = conn.execute("DELETE FROM group_invitations WHERE id = ?1", params![id])?;
+    Ok(n > 0)
 }
 
 #[cfg(test)]

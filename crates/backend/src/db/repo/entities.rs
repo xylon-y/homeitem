@@ -223,22 +223,32 @@ fn build_where(group_id: &str, q: &EntitiesQuery) -> (String, Vec<String>) {
     }
     if !q.q.trim().is_empty() {
         sql.push_str(
-            " AND (e.name LIKE ? OR e.description LIKE ? OR e.serial_number LIKE ?
-                   OR e.model_number LIKE ? OR e.manufacturer LIKE ? OR e.notes LIKE ?
-                   OR CAST(e.asset_id AS TEXT) LIKE ?)",
+            " AND (e.name LIKE ? ESCAPE '\\' OR e.description LIKE ? ESCAPE '\\' OR e.serial_number LIKE ? ESCAPE '\\'
+                   OR e.model_number LIKE ? ESCAPE '\\' OR e.manufacturer LIKE ? ESCAPE '\\' OR e.notes LIKE ? ESCAPE '\\'
+                   OR CAST(e.asset_id AS TEXT) LIKE ? ESCAPE '\\')",
         );
-        let pat = format!("%{}%", q.q.trim());
+        let escaped = q
+            .q
+            .trim()
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pat = format!("%{}%", escaped);
         for _ in 0..7 {
             args.push(pat.clone());
         }
     }
-    for id in EntitiesQuery::id_list(&q.parent_ids) {
-        sql.push_str(" AND e.parent_id = ?");
-        args.push(id);
+    let parent_ids = EntitiesQuery::id_list(&q.parent_ids);
+    if !parent_ids.is_empty() {
+        let ph = vec!["?"; parent_ids.len()].join(",");
+        sql.push_str(&format!(" AND e.parent_id IN ({ph})"));
+        args.extend(parent_ids);
     }
-    for id in EntitiesQuery::id_list(&q.entity_type_ids) {
-        sql.push_str(" AND e.entity_type_id = ?");
-        args.push(id);
+    let type_ids = EntitiesQuery::id_list(&q.entity_type_ids);
+    if !type_ids.is_empty() {
+        let ph = vec!["?"; type_ids.len()].join(",");
+        sql.push_str(&format!(" AND e.entity_type_id IN ({ph})"));
+        args.extend(type_ids);
     }
 
     let tag_ids = EntitiesQuery::id_list(&q.tags);
@@ -505,8 +515,13 @@ pub fn get(conn: &Connection, group_id: &str, id: &str) -> AppResult<EntityOut> 
         params![id],
         |row| row.get(0),
     )?;
+    let child_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM entities WHERE parent_id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
 
-    let summary = summary_of(&r, tags, thumbs.get(id).cloned(), maintenance_count);
+    let summary = summary_of(&r, tags, thumbs.get(id).cloned(), child_count);
     Ok(EntityOut {
         summary,
         serial_number: detail.serial,
@@ -795,7 +810,7 @@ pub fn duplicate(
     source_id: &str,
     new_id: &str,
     opts: &common::dto::DuplicateOptions,
-) -> AppResult<Vec<String>> {
+) -> AppResult<Vec<(String, String)>> {
     let now = super::now();
     let src = query_one_str(
         conn,
@@ -839,14 +854,19 @@ pub fn duplicate(
     super::taxonomy::set_entity_tags(conn, new_id, &tag_ids)?;
 
     if opts.copy_custom_fields {
-        let fields = list_fields(conn, source_id)?;
+        let mut fields = list_fields(conn, source_id)?;
+        // Field rows use a global PRIMARY KEY (entity_fields.id); reusing the
+        // source ids collides with the still-existing source rows. Regenerate.
+        for f in &mut fields {
+            f.id = uuid::Uuid::new_v4().to_string();
+        }
         set_fields(conn, new_id, &fields)?;
     }
     if opts.copy_maintenance {
         conn.execute(
             "INSERT INTO maintenance_entries (id, entity_id, name, description, cost,
                                               completed_date, scheduled_date, created_at, updated_at)
-             SELECT lower(hex(randomblob(16)), ?1, name, description, cost,
+             SELECT lower(hex(randomblob(16))), ?1, name, description, cost,
                     completed_date, scheduled_date, ?2, ?2
                FROM maintenance_entries WHERE entity_id = ?3",
             params![new_id, now, source_id],
@@ -880,7 +900,7 @@ pub fn duplicate(
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
                 params![uuid::Uuid::new_v4().to_string(), new_id, kind, title, file_name, new_path, mime, size, bool_sql(primary), now],
             )?;
-            copied_files.push(path);
+            copied_files.push((path, new_path));
         }
     }
     Ok(copied_files)
@@ -1006,6 +1026,53 @@ pub fn entity_exists(conn: &Connection, group_id: &str, id: &str) -> AppResult<b
 }
 
 /// Check that referenced type/parent/tags belong to the group.
+/// Validate all references carried by a partial update, including the
+/// nested `Option<Option<String>>` parent/location fields. Only fields that
+/// are actually being set to an id are checked; clearing to null is fine.
+pub fn validate_patch_refs(
+    conn: &Connection,
+    group_id: &str,
+    req: &common::dto::EntityPatch,
+) -> AppResult<()> {
+    if let Some(type_id) = &req.entity_type_id {
+        let ok: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM entity_types WHERE id = ?1 AND group_id = ?2",
+            params![type_id, group_id],
+            |r| r.get(0),
+        )?;
+        if ok == 0 {
+            return Err(AppError::Validation("物品类型不存在".into()));
+        }
+    }
+    // Option<Option<..>>: outer None = not touched; Some(None) = clear to null.
+    for pid in req
+        .parent_id
+        .iter()
+        .flatten()
+        .chain(req.location_id.iter().flatten())
+    {
+        let ok: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM entities WHERE id = ?1 AND group_id = ?2",
+            params![pid, group_id],
+            |r| r.get(0),
+        )?;
+        if ok == 0 {
+            return Err(AppError::Validation("上级位置不存在".into()));
+        }
+    }
+    for tid in req.tag_ids.iter().flatten() {
+        let ok: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM tags WHERE id = ?1 AND group_id = ?2",
+            params![tid, group_id],
+            |r| r.get(0),
+        )?;
+        if ok == 0 {
+            return Err(AppError::Validation("标签不存在".into()));
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_refs(
     conn: &Connection,
     group_id: &str,
@@ -1166,5 +1233,83 @@ mod tests {
         assert_eq!(p.len(), 2);
         assert_eq!(p[0].name, "客厅");
         assert_eq!(p[1].name, "电视");
+    }
+
+    #[test]
+    fn duplicate_with_maintenance_and_fields_succeeds() {
+        let conn = setup();
+        conn.execute(
+            "INSERT INTO maintenance_entries (id, entity_id, name, created_at, updated_at)
+             VALUES ('m1', 'it1', '保养', '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let f = EntityFieldData {
+            id: "f1".into(),
+            name: "颜色".into(),
+            kind: "text".into(),
+            text_value: "黑".into(),
+            number_value: 0.0,
+            boolean_value: false,
+        };
+        set_fields(&conn, "it1", &[f]).unwrap();
+
+        let opts = common::dto::DuplicateOptions {
+            copy_maintenance: true,
+            copy_custom_fields: true,
+            copy_attachments: false,
+            copy_prefix: "副本 ".into(),
+        };
+        let copied = duplicate(&conn, "g1", "it1", "copy1", &opts).unwrap();
+        assert!(copied.is_empty()); // no attachments requested
+
+        let out = get(&conn, "g1", "copy1").unwrap();
+        assert_eq!(out.summary.name, "副本 电视");
+        assert_eq!(out.maintenance_count, 1);
+        assert_eq!(out.fields.len(), 1);
+        assert_ne!(out.fields[0].id, "f1"); // copied field got a fresh PK
+        assert_eq!(out.fields[0].name, "颜色");
+
+        let source_fields = list_fields(&conn, "it1").unwrap();
+        assert_eq!(source_fields[0].id, "f1"); // source unchanged
+
+        let m: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM maintenance_entries WHERE entity_id = 'copy1'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(m, 1);
+    }
+
+    #[test]
+    fn duplicate_invalidates_foreign_refs() {
+        let conn = setup();
+        // A second group's type/id must be rejected by patch validation.
+        conn.execute(
+            "INSERT INTO groups (id, name, currency, created_at, updated_at)
+             VALUES ('g2', 'Other', 'CNY', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let foreign_id = "foreign-type";
+        conn.execute(
+            "INSERT INTO entity_types (id, group_id, name, created_at, updated_at)
+             VALUES (?1, 'g2', 'Foreign', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            params![foreign_id],
+        )
+        .unwrap();
+        let req = common::dto::EntityPatch {
+            entity_type_id: Some(foreign_id.into()),
+            ..Default::default()
+        };
+        assert!(validate_patch_refs(&conn, "g1", &req).is_err());
+    }
+
+    #[test]
+    fn search_wildcards_are_literal() {
+        let conn = setup();
+        let q = EntitiesQuery { q: "%".into(), ..Default::default() };
+        let page = list(&conn, "g1", &q).unwrap();
+        assert_eq!(page.total, 0, "a literal % must not match everything");
     }
 }

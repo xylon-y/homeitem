@@ -199,6 +199,11 @@ pub fn count_users(conn: &Connection) -> AppResult<i64> {
 ///
 /// Returns the joined record for token issuance.
 pub fn setup_owner(conn: &Connection, name: &str, email: &str, hash: &str) -> AppResult<UserRecord> {
+    // Re-check inside the write transaction: the handler's read-side check is
+    // racy, and two concurrent /setup calls must not both create an owner.
+    if count_users(conn)? > 0 {
+        return Err(AppError::Conflict("系统已初始化，请直接登录".into()));
+    }
     let user_id = uuid::Uuid::new_v4().to_string();
     let group_id = uuid::Uuid::new_v4().to_string();
     super::groups::insert(conn, &group_id, if name.trim().is_empty() { "我的家庭" } else { name }, "CNY")?;
@@ -236,8 +241,12 @@ pub fn register_with_invitation(
     } else {
         let (inv_id, inv_group, inv_role) = super::groups::find_invitation(conn, token)?
             .ok_or_else(|| AppError::BadRequest("邀请令牌无效或已过期".into()))?;
+        // Consume atomically before inserting so a concurrent registration
+        // cannot reuse the same invitation token.
+        if !super::groups::consume_invitation(conn, &inv_id)? {
+            return Err(AppError::BadRequest("邀请令牌无效或已过期".into()));
+        }
         insert(conn, &user_id, name, email, Some(hash), &inv_group, inv_role, true)?;
-        super::groups::consume_invitation(conn, &inv_id)?;
         inv_group
     };
     let _ = created;
@@ -343,5 +352,32 @@ mod tests {
         let members = list_group_members(&conn, "g1").unwrap();
         assert_eq!(members.len(), 2);
         assert_eq!(count_group_users(&conn, "g1").unwrap(), 2);
+    }
+
+    #[test]
+    fn setup_owner_is_idempotent_guard() {
+        let conn = mem_conn();
+        setup_owner(&conn, "Owner", "o@x.com", "hash").unwrap();
+        // A second setup attempt inside the same write path must be rejected.
+        assert!(setup_owner(&conn, "Owner2", "o2@x.com", "hash").is_err());
+        assert_eq!(count_users(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn invitation_consumption_is_atomic() {
+        let conn = mem_conn();
+        conn.execute(
+            "INSERT INTO groups (id, name, currency, created_at, updated_at)
+             VALUES ('g1', 'Home', 'CNY', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        super::super::groups::create_invitation(&conn, "inv1", "g1", "tok123", GroupRole::User, None, Some("2027-01-02T00:00:00Z")).unwrap();
+        let (id, gid, role) = super::super::groups::find_invitation(&conn, "tok123").unwrap().unwrap();
+        assert_eq!(gid, "g1");
+        assert!(matches!(role, GroupRole::User));
+        assert!(super::super::groups::consume_invitation(&conn, &id).unwrap());
+        assert!(!super::super::groups::consume_invitation(&conn, &id).unwrap());
+        assert!(super::super::groups::find_invitation(&conn, "tok123").unwrap().is_none());
     }
 }

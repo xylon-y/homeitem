@@ -25,7 +25,7 @@ homeitem 用**纯 Rust** 重构 HomeBox：家庭物品、位置、标签、附�
 | 搜索筛选 | ✅ | 关键词 + 标签 + 类型 + 位置 + 有无照片 + 归档 + 排序分页 |
 | 账号密码登录 | ✅ | Argon2id + JWT |
 | 统计 | ✅ | 总价值、按位置、按标签、保修数量 |
-| 多用户/分组（group）/邀请 | ⚠️ 简化为单租户多用户 | 无 group 概念，见 3.4 |
+| 多用户/分组（group）/邀请 | ✅ 完整 | group 多租户 + 成员角色 + 邀请令牌，见 3.4 |
 | CSV 导入导出、标签打印、Notifier、OIDC、API Key、模板、备份 | ❌ 不在本期 | 表结构预留扩展位 |
 
 ### 1.2 技术栈
@@ -243,10 +243,16 @@ CREATE INDEX idx_maint_scheduled ON maintenance_entries(scheduled_date);
 - entity_types：`Location(位置, is_location=1)`、`Item(物品, is_location=0)` —— 保证首个物品可直接创建。
 - 不预置用户；首次启动进入 **/setup** 创建管理员。
 
-### 3.4 用户模型（简化说明）
+### 3.4 用户模型（多租户）
 
-上游为 `group` 多租户。homeitem 本期为**单租户、多用户**：所有用户共享一个库存空间；`is_superuser` 仅用于后续管理能力。
-这样保留了「账号密码登录」，同时去掉邀请、分组切换、成员管理等本期不需要的复杂度。**如果你需要多租户（多个独立家庭空间），请现在提出，表结构需增加 `group_id` 外键。**
+与上游一致，homeitem 采用 **group 多租户**：每个用户归属一个 group，所有实体、标签、类型、附件、通知器、统计均按 `group_id` 隔离。
+- 首次 `/setup` 创建 owner 及其默认 group，并播种默认物品/位置类型。
+- 组内角色分 `owner` / `user`；owner 可管理成员、角色与邀请令牌。
+- 注册需邀请令牌；`HOMEITEM_ALLOW_REGISTRATION=true` 时允许自助注册（自助注册者成为自己 group 的 owner）。
+- JWT 携带 `gid` + `role`；鉴权中间件每次请求都会回查 `user_groups`，成员被移除或角色变更后旧令牌立即失效。
+- `is_superuser` 为未来跨组管理能力预留，当前不参与常规鉴权。
+
+> 注：早期设计稿曾计划简化为单租户，最终实现已采用完整 group 模型，本节与 README 为准。
 
 ---
 

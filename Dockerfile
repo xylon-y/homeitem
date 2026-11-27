@@ -21,7 +21,7 @@ RUN cargo build --release -p backend
 # ---------- 阶段 3: 运行镜像 (debian-slim, 非 root) ----------
 FROM debian:bookworm-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 # 非 root 运行
 RUN useradd --system --create-home --home-dir /app --uid 10001 homeitem

@@ -30,6 +30,17 @@ pub async fn upload(
     let auth = require_user(req, &config)?;
     let entity_id = req.param::<String>("id").unwrap_or_default();
 
+    // Verify entity ownership BEFORE touching the filesystem, so a foreign or
+    // non-existent entity cannot leave orphan files or create out-of-tree dirs.
+    let (gid, eid) = (auth.group_id.clone(), entity_id.clone());
+    let owned = with_read(&pool, move |conn| {
+        crate::db::repo::entities::entity_exists(conn, &gid, &eid)
+    })
+    .await?;
+    if !owned {
+        return Err(AppError::NotFound("物品不存在".into()));
+    }
+
     let form = req
         .form_data()
         .await
@@ -86,9 +97,6 @@ pub async fn upload(
     let (eid, aid, rel2) = (entity_id.clone(), attachment_id.clone(), rel.clone());
     let (kind2, title2, mime2) = (kind.clone(), title.clone(), mime.clone());
     let out = with_write(&pool, move |conn| {
-        if !crate::db::repo::entities::entity_exists(conn, &auth.group_id, &eid)? {
-            return Err(AppError::NotFound("物品不存在".into()));
-        }
         repo::insert(conn, &aid, &eid, &kind2, &title2, &original_name, &rel2, &mime2, size, is_primary)?;
         repo::find(conn, &eid, &aid)?.ok_or_else(|| AppError::Internal("attachment vanished".into()))
     })
@@ -140,22 +148,17 @@ pub async fn download(
     let entity_id = req.param::<String>("id").unwrap_or_default();
     let attachment_id = req.param::<String>("aid").unwrap_or_default();
 
-    let (eid, aid) = (entity_id.clone(), attachment_id.clone());
-    let att = with_read(&pool, move |conn| repo::find(conn, &eid, &aid))
-        .await?
-        .ok_or_else(|| AppError::NotFound("附件不存在".into()))?;
-
-    // ownership check for user tokens; attachment tokens are per-user already
-    if auth.scope == common::TokenScope::User {
-        let (gid, eid) = (auth.group_id.clone(), entity_id.clone());
-        let ok = with_read(&pool, move |conn| {
-            crate::db::repo::entities::entity_exists(conn, &gid, &eid)
-        })
-        .await?;
-        if !ok {
-            return Err(AppError::NotFound("附件不存在".into()));
+    // Ownership check applies to BOTH token scopes. Attachment (media) tokens
+    // carry a signed `gid`; skipping this check allowed cross-tenant IDOR.
+    let (gid, eid2, aid2) = (auth.group_id.clone(), entity_id.clone(), attachment_id.clone());
+    let att = with_read(&pool, move |conn| {
+        if !crate::db::repo::entities::entity_exists(conn, &gid, &eid2)? {
+            return Ok(None);
         }
-    }
+        repo::find(conn, &eid2, &aid2)
+    })
+    .await?
+    .ok_or_else(|| AppError::NotFound("附件不存在".into()))?;
 
     let full = crate::db::safe_join(&config.upload_dir, &att.path)?;
     let bytes = std::fs::read(&full)

@@ -102,7 +102,12 @@ pub fn router(pool: Pool, config: &Config) -> Router {
         .push(Router::with_path("health").get(system::health))
         .push(Router::with_path("setup").post(users::setup))
         .push(Router::with_path("login").post(users::login))
-        .push(Router::with_path("register").post(users::register));
+        .push(Router::with_path("register").post(users::register))
+        // Media downloads authenticate themselves via `require_media` (which
+        // accepts 7-day attachment tokens passed in `?token=`), so they must
+        // sit outside the User-scope-only auth middleware. `<img src>` cannot
+        // send an Authorization header.
+        .push(Router::with_path("entities/{id}/attachments/{aid}").get(attachments::download));
 
     // -- authenticated API ----------------------------------------------
     let api = Router::with_path(API_PREFIX)
@@ -131,11 +136,7 @@ pub fn router(pool: Pool, config: &Config) -> Router {
                 .get(attachments::list)
                 .post(attachments::upload),
         )
-        .push(
-            Router::with_path("entities/{id}/attachments/{aid}")
-                .get(attachments::download)
-                .delete(attachments::delete),
-        )
+        .push(Router::with_path("entities/{id}/attachments/{aid}").delete(attachments::delete))
         .push(Router::with_path("locations/tree").get(entities::location_tree))
         .push(Router::with_path("entity-types").get(entities::entity_types))
         .push(Router::with_path("tags").get(entities::list_tags))

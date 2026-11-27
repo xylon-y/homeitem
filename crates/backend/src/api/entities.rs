@@ -143,9 +143,7 @@ pub async fn patch_entity(depot: &mut salvo::Depot, req: &mut salvo::Request) ->
     let body: EntityPatch = json_body(req).await?;
     let gid = auth.group_id.clone();
     let out = with_write(pool, move |conn| {
-        if let Some(type_id) = &body.entity_type_id {
-            repo::validate_refs(conn, &gid, type_id, &None, &None, &[])?;
-        }
+        repo::validate_patch_refs(conn, &gid, &body)?;
         repo::patch(conn, &gid, &id, &body)?;
         repo::get(conn, &gid, &id)
     })
@@ -189,14 +187,22 @@ pub async fn duplicate_entity(depot: &mut salvo::Depot, req: &mut salvo::Request
     let gid = auth.group_id.clone();
     let out = with_write(pool, move |conn| {
         let copied = repo::duplicate(conn, &gid, &id, &new_id, &body)?;
-        // copied paths point at the source entity directory; files were not
-        // duplicated on disk by the repo layer, so reference them as-is
-        for rel in copied {
-            let _ = rel; // attachments share files: no disk copy needed
-        }
-        repo::get(conn, &gid, &new_id)
+        repo::get(conn, &gid, &new_id).map(|o| (o, copied))
     })
     .await?;
+    let (out, copied) = out;
+    // The repo stores new attachment paths under the new entity id; actually
+    // copy the bytes so the duplicate's attachments resolve on disk.
+    for (old_rel, new_rel) in copied {
+        let src = config.upload_dir.join(&old_rel);
+        let dst = config.upload_dir.join(&new_rel);
+        if let Some(parent) = dst.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::copy(&src, &dst) {
+            tracing::warn!(%e, ?src, ?dst, "failed to copy attachment on duplicate");
+        }
+    }
     Ok(Json(out))
 }
 

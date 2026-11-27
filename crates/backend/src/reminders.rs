@@ -98,14 +98,35 @@ async fn scan_group(pool: &Pool, config: &Config, group_id: &str) -> AppResult<u
                         config.public_base_url,
                         item.entity_id,
                     );
+                    // An explicit target overrides the group-wide recipient
+                    // list; fall back to all members when left blank.
+                    let targets: Vec<String> = if notifier.target.contains('@') {
+                        notifier
+                            .target
+                            .split([',', ';'])
+                            .map(str::trim)
+                            .filter(|s| s.contains('@'))
+                            .map(str::to_string)
+                            .collect()
+                    } else {
+                        recipients.clone()
+                    };
                     let mut ok_any = false;
-                    for email in &recipients {
+                    for email in &targets {
                         match m.send(email, &subject, &body).await {
                             Ok(()) => ok_any = true,
                             Err(e) => tracing::warn!(to = %email, error = %e, "reminder mail failed"),
                         }
                     }
                     ok_any
+                }
+                (common::dto::NotifierKind::Webhook, _) => {
+                    tracing::warn!(
+                        notifier = %notifier.id,
+                        target = %notifier.target,
+                        "webhook notifier is not implemented; skipping"
+                    );
+                    false
                 }
                 _ => false,
             };

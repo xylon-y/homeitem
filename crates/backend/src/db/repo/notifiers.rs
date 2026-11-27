@@ -247,13 +247,17 @@ pub fn reminders(conn: &Connection, group_id: &str, q: &RemindersQuery) -> AppRe
 
     // scheduled maintenance
     if kinds.contains("maintenance") {
-        let rows = query_all(
-            conn,
+        let done_clause = if q.include_done { "" } else { " AND m.completed_date IS NULL" };
+        let sql = format!(
             "SELECT m.id, m.entity_id, m.name, m.scheduled_date, e.name
                FROM maintenance_entries m
                JOIN entities e ON e.id = m.entity_id
               WHERE e.group_id = ?1 AND e.archived = 0
-                AND m.scheduled_date IS NOT NULL AND m.completed_date IS NULL",
+                AND m.scheduled_date IS NOT NULL{done_clause}"
+        );
+        let rows = query_all(
+            conn,
+            &sql,
             params![group_id],
             |r| {
                 Ok::<_, rusqlite::Error>((
@@ -339,7 +343,7 @@ pub fn statistics(conn: &Connection, group_id: &str) -> AppResult<Statistics> {
            COALESCE(SUM(CASE WHEN et.is_location = 0 AND e.archived = 0 THEN 1 ELSE 0 END), 0),
            COALESCE(SUM(CASE WHEN et.is_location = 0 AND e.archived = 0 THEN e.quantity * e.purchase_price ELSE 0 END), 0),
            COALESCE(SUM(CASE WHEN et.is_location = 1 THEN 1 ELSE 0 END), 0),
-           COALESCE(SUM(CASE WHEN e.warranty_expires IS NOT NULL AND e.archived = 0 THEN 1 ELSE 0 END), 0),
+           COALESCE(SUM(CASE WHEN et.is_location = 0 AND e.warranty_expires IS NOT NULL AND e.archived = 0 THEN 1 ELSE 0 END), 0),
            COALESCE(SUM(CASE WHEN e.archived = 1 THEN 1 ELSE 0 END), 0),
            COALESCE(SUM(CASE WHEN et.is_location = 0 AND e.archived = 0 AND e.min_quantity > 0 AND e.quantity <= e.min_quantity THEN 1 ELSE 0 END), 0)
          FROM entities e JOIN entity_types et ON et.id = e.entity_type_id
@@ -419,6 +423,7 @@ pub fn stats_by_tag(conn: &Connection, group_id: &str) -> AppResult<Vec<TotalsBy
            FROM tags t
            LEFT JOIN entity_tags et ON et.tag_id = t.id
            LEFT JOIN entities e ON e.id = et.entity_id AND e.archived = 0
+            AND e.entity_type_id IN (SELECT id FROM entity_types WHERE is_location = 0)
           WHERE t.group_id = ?1
           GROUP BY t.id, t.name
           ORDER BY 3 DESC",
@@ -439,9 +444,10 @@ pub fn stats_purchase_over_time(conn: &Connection, group_id: &str) -> AppResult<
     let rows = query_all(
         conn,
         "SELECT substr(purchase_date, 1, 7) AS ym,
-                COALESCE(SUM(purchase_price), 0)
+                COALESCE(SUM(quantity * purchase_price), 0)
            FROM entities
           WHERE group_id = ?1 AND purchase_date IS NOT NULL AND archived = 0
+            AND is_location = 0
           GROUP BY ym ORDER BY ym",
         params![group_id],
         |r| {
