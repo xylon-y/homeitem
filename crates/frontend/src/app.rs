@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
 
-use crate::pages::{dashboard, items, login, maintenance, reminders, settings, setup, taxonomy};
+use crate::pages::{csvio, dashboard, items, login, maintenance, reminders, settings, setup, taxonomy};
 
 /// 全局登录态：任何组件都可读写，401 时置 false 触发重新渲染。
 #[derive(Clone, Copy)]
@@ -35,6 +35,7 @@ fn MainRoutes() -> impl IntoView {
             <Route path=path!("/maintenance/:id") view=maintenance::MaintenancePage />
             <Route path=path!("/locations") view=items::LocationsPage />
             <Route path=path!("/tags") view=taxonomy::TagsPage />
+            <Route path=path!("/csv") view=csvio::CsvPage />
             <Route path=path!("/types") view=taxonomy::TypesPage />
             <Route path=path!("/reminders") view=reminders::RemindersPage />
             <Route path=path!("/notifiers") view=reminders::NotifiersPage />
@@ -81,6 +82,7 @@ pub fn App() -> impl IntoView {
                             <a href="/items">"物品"</a>
                             <a href="/locations">"位置"</a>
                             <a href="/tags">"标签"</a>
+                            <a href="/csv">"CSV"</a>
                             <a href="/reminders">"提醒"</a>
                             <a href="/settings">"设置"</a>
                             <button class="btn-link" on:click=logout_action>"退出"</button>

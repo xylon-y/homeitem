@@ -2,6 +2,7 @@
 //! so they compose inside either a read or a write transaction.
 
 pub mod attachments;
+pub mod csvio;
 pub mod entities;
 pub mod groups;
 pub mod maintenance;

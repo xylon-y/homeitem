@@ -670,6 +670,32 @@ pub fn field_values(conn: &Connection, group_id: &str, name: &str) -> AppResult<
     )
 }
 
+/// Find an entity by its import_ref inside a group (for CSV upsert).
+pub fn find_by_import_ref(
+    conn: &Connection,
+    group_id: &str,
+    import_ref: &str,
+) -> AppResult<Option<String>> {
+    if import_ref.is_empty() {
+        return Ok(None);
+    }
+    query_optional(
+        conn,
+        "SELECT id FROM entities WHERE group_id = ?1 AND import_ref = ?2 LIMIT 1",
+        &[&group_id, &import_ref],
+        |r| text(r, 0),
+    )
+}
+
+/// Set the import_ref of an entity (CSV upsert bookkeeping).
+pub fn set_import_ref(conn: &Connection, id: &str, import_ref: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE entities SET import_ref = ?1, updated_at = ?2 WHERE id = ?3",
+        params![import_ref, super::now(), id],
+    )?;
+    Ok(())
+}
+
 /// Create an entity; caller must have validated references.
 pub fn create(
     conn: &Connection,

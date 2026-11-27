@@ -6,7 +6,7 @@ use salvo::prelude::*;
 
 use common::API_PREFIX;
 
-use crate::api::{attachments, entities, groups, maintenance, notifiers, system, taxonomy, users};
+use crate::api::{attachments, csvio, entities, groups, maintenance, notifiers, system, taxonomy, users};
 use crate::auth::middleware::AuthMiddleware;
 use crate::config::Config;
 use crate::db::Pool;
@@ -132,6 +132,12 @@ pub fn router(pool: Pool, config: &Config) -> Router {
         .push(Router::with_path("group/invitations").get(groups::invitations).post(groups::create_invitation))
         .push(Router::with_path("group/invitations/{id}").delete(groups::delete_invitation))
         .push(Router::with_path("entities").get(entities::list_entities).post(entities::create_entity))
+        .push(Router::with_path("entities/export").get(csvio::export))
+        .push(
+            Router::with_path("entities/import")
+                .post(csvio::import),
+        )
+        .push(Router::with_path("entities/import/preview").post(csvio::preview))
         .push(
             Router::with_path("entities/{id}")
                 .get(entities::get_entity)

@@ -365,3 +365,80 @@ pub fn urlencode(s: &str) -> String {
         })
         .collect()
 }
+
+// ---- CSV 导入导出 ----
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ImportResult {
+    pub created: usize,
+    pub updated: usize,
+    pub skipped: usize,
+    pub warnings: Vec<String>,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ImportPreview {
+    pub total: usize,
+    pub warnings: Vec<String>,
+    pub preview: Vec<serde_json::Value>,
+}
+
+fn build_multipart(filename: &str, file_bytes: Vec<u8>) -> (String, Vec<u8>) {
+    let boundary = format!("----homeitem{}", js_sys::Date::now() as i64);
+    let mut body = Vec::new();
+    let push = |s: &str, b: &mut Vec<u8>| b.extend_from_slice(s.as_bytes());
+    push(&format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: text/csv\r\n\r\n"), &mut body);
+    body.extend_from_slice(&file_bytes);
+    push(&format!("\r\n--{boundary}--\r\n"), &mut body);
+    (boundary, body)
+}
+
+async fn post_file<T: serde::de::DeserializeOwned>(path: &str, filename: &str, bytes: Vec<u8>) -> Result<T, ApiError> {
+    let (boundary, body) = build_multipart(filename, bytes);
+    let t = token::get().unwrap_or_default();
+    let resp = Request::post(&url(path))
+        .header("Authorization", &format!("Bearer {t}"))
+        .header("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+        .body(body)
+        .map_err(|e| ApiError { code: "BAD".into(), message: format!("{e}") })?
+        .send().await
+        .map_err(|e| ApiError { code: "NETWORK".into(), message: format!("{e}") })?;
+    parse(resp, false).await
+}
+
+pub async fn preview_import(filename: &str, bytes: Vec<u8>) -> Result<ImportPreview, ApiError> {
+    post_file("/entities/import/preview", filename, bytes).await
+}
+
+pub async fn import_csv(filename: &str, bytes: Vec<u8>) -> Result<ImportResult, ApiError> {
+    post_file("/entities/import", filename, bytes).await
+}
+
+/// 触发浏览器下载 CSV（带认证头，通过 fetch + blob）。
+pub async fn export_csv() -> Result<(), ApiError> {
+    use wasm_bindgen::JsCast;
+    let t = token::get().unwrap_or_default();
+    let resp = gloo_net::http::Request::get(&url("/entities/export"))
+        .header("Authorization", &format!("Bearer {t}"))
+        .send().await
+        .map_err(|e| ApiError { code: "NETWORK".into(), message: format!("{e}") })?;
+    if resp.status() != 200 {
+        return Err(ApiError { code: "ERROR".into(), message: format!("导出失败 (HTTP {})", resp.status()) });
+    }
+    let bytes = resp.binary().await.map_err(|e| ApiError { code: "ERROR".into(), message: format!("{e}") })?;
+    let array = js_sys::Uint8Array::from(bytes.as_slice());
+    let blob = web_sys::Blob::new_with_u8_array_sequence(&js_sys::Array::of1(&array))
+        .map_err(|e| ApiError { code: "ERROR".into(), message: format!("{:?}", e) })?;
+    let url = web_sys::Url::create_object_url_with_blob(&blob)
+        .map_err(|e| ApiError { code: "ERROR".into(), message: format!("{:?}", e) })?;
+    let window = web_sys::window().ok_or_else(|| ApiError { code: "ERROR".into(), message: "无窗口".into() })?;
+    let doc = window.document().ok_or_else(|| ApiError { code: "ERROR".into(), message: "无文档".into() })?;
+    let a = doc.create_element("a").map_err(|e| ApiError { code: "ERROR".into(), message: format!("{:?}", e) })?
+        .dyn_into::<web_sys::HtmlAnchorElement>().map_err(|_| ApiError { code: "ERROR".into(), message: "元素转换失败".into() })?;
+    a.set_href(&url);
+    a.set_download("homeitem-export.csv");
+    a.click();
+    let _ = web_sys::Url::revoke_object_url(&url);
+    Ok(())
+}

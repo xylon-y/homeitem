@@ -1,6 +1,7 @@
 //! REST API handlers.
 
 pub mod attachments;
+pub mod csvio;
 pub mod entities;
 pub mod groups;
 pub mod maintenance;

@@ -1,5 +1,6 @@
 //! 页面组件。
 
+pub mod csvio;
 pub mod dashboard;
 pub mod items;
 pub mod login;

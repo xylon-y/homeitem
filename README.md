@@ -26,6 +26,10 @@
 - 附件上传（multipart），照片自动设为主图，画廊展示与删除，媒体链接支持 7 天媒体令牌
 - 保养/维护记录（scheduled / completed，含独立管理页面）
 - 搜索与筛选：全文（名称/序列号/备注等）、标签、类型、位置、仅带照片、低库存、排序分页
+- **CSV / TSV 导入导出**（与上游 HomeBox 的 `HB.*` 列格式兼容）：
+  - 导出：一键下载全部物品，含 `HB.import_ref`、`HB.location`、`HB.label`、`HB.field.*` 自定义字段
+  - 导入：自动识别 CSV/TSV 分隔符，支持预览、按 `HB.import_ref` 去重更新（upsert）、`HB.location` 嵌套路径（如 `Home / Office / Desk`）自动建层级、标签自动创建
+  - 接口：`GET /entities/export`、`POST /entities/import`、`POST /entities/import/preview`
 
 ### 提醒与统计
 - 到期提醒：保修到期 / 自定义提醒 / 保养计划 / 库存不足（低库存阈值），聚合页展示
@@ -36,6 +40,27 @@
 - 账号密码登录（Argon2id，支持用户名或邮箱），保持登录 30 天，邀请码注册页
 - 密码修改后自动撤销所有旧令牌（token version 机制）
 - 多租户组：组内成员角色（user / owner），成员管理、邀请令牌、组设置界面
+
+## CSV 导入格式
+
+列名与上游 HomeBox 一致（`HB.` 前缀，大小写敏感，顺序任意，除 `HB.name` 外均可省略）。支持 CSV（逗号）与 TSV（制表符），扩展名不影响识别。
+
+| 列 | 说明 |
+|---|---|
+| `HB.import_ref` | 去重键（≤100 字符）。已存在则**更新**该物品，否则新建。强烈建议填写 |
+| `HB.name` | 物品名称（必填，缺失行会跳过） |
+| `HB.location` | 位置路径，支持 `Home / Office / Desk` 嵌套自动创建 |
+| `HB.label` | 标签，逗号分隔，可引用已有或新建 |
+| `HB.field.名称` | 自定义字段，如 `HB.field.Serial Number` |
+| `HB.quantity` / `HB.min_quantity` | 数量 / 最低库存（数字） |
+| `HB.purchase_price` / `HB.purchase_time` | 购价 / 购买日期（`YYYY-MM-DD`） |
+| `HB.serial_number` / `HB.model_number` / `HB.manufacturer` | 序列号 / 型号 / 厂商 |
+| `HB.description` / `HB.notes` | 描述 / 备注 |
+| `HB.insured` / `HB.lifetime_warranty` | 布尔：`true/false`、`yes/no`、`1/0`（大小写不敏感） |
+| `HB.warranty_expires` / `HB.warranty_details` | 保修到期 / 保修详情 |
+| `HB.sold_to` / `HB.sold_price` / `HB.sold_time` / `HB.sold_notes` | 售出信息 |
+
+**注意**：导入导出不含附件，附件需在导入后单独上传。位置路径用 `/` 分隔，标签名本身可含 `/`（用逗号分隔标签）。
 
 ## 开发
 
@@ -103,6 +128,7 @@ docker-compose.yml
 - GET|PUT /group  GET /group/members  DELETE /group/members/{id}  PATCH /group/members/{id}/role
 - GET|POST /group/invitations  DELETE /group/invitations/{id}
 - GET|POST /entities  GET|PUT|PATCH|DELETE /entities/{id}  POST /entities/{id}/duplicate  GET /entities/{id}/path
+- GET /entities/export  POST /entities/import  POST /entities/import/preview
 - GET|POST /entities/{id}/attachments  GET|DELETE /entities/{id}/attachments/{aid}
 - GET|POST /entities/{id}/maintenance  PUT|DELETE /entities/{id}/maintenance/{mid}
 - GET /locations/tree
